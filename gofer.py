@@ -1,34 +1,30 @@
 #!/usr/bin/python
 
 #### standard modules
-import argparse
-import logging
-from systemd.journal import JournalHandler
-import os
-import sys
-import signal
-from datetime import datetime as dt
-from threading import Thread
-import threading
-import fnmatch
+from argparse import ArgumentParser, REMAINDER
+from os import walk, path
+from sys import exit
+from signal import signal, SIGINT, SIGHUP, SIGQUIT, SIGTERM
+from threading import Thread, Lock, current_thread
+from fnmatch import fnmatch
 from subprocess import Popen, PIPE
 
 #### 3rd party
 import sdnotify
 
-CONSOLE = threading.Lock() # thread-safe console logging!
+CONSOLE = Lock() # thread-safe console logging!
 THREADS = []
-SIGINT = False
+SIG = False
 NOTIFY = sdnotify.SystemdNotifier()
 
 #### parse arguments
-parser = argparse.ArgumentParser(prog='gofer', description='Configurable intermediary process host for systemd', epilog='Example: $ gofer --binary httpd --systemd httpd --basedir /usr/bin --extravars @port=80 --environment @user=httpd --command @binary --port @port\n\n')
+parser = ArgumentParser(prog='gofer', description='Configurable intermediary process host for systemd', epilog='Example: $ gofer --binary httpd --systemd httpd --basedir /usr/bin --extravars @port=80 --environment @user=httpd --command @binary --port @port\n\n')
 parser.add_argument('--binary', '-b', required=True, help='The target binary name that will be run as a child process of this script')
 parser.add_argument('--systemd', '-s', required=False, help='the systemd unit name if different from the binary. If nothing is provided the name of the binary will be used.')
 parser.add_argument('--basedir', '-d', required=True, help='The base directory to look for the target binary')
 parser.add_argument('--extravars', '-e', required=False, help='@key=value,@key=value list of pairs of variables to pass into the command')
 parser.add_argument('--environment', '-v', required=False, help='@key=value,@key=value list of pairs of envuronment variables to defined in the thread')
-parser.add_argument('--command', '-c', required=True, nargs=argparse.REMAINDER, help='The command to run. The binary should be replaced with @binary to be templated out. Any other variables in --extravars should be represented by @varname and will be replaced at runtime. This should be the last argument given as it will capture everything after it.')
+parser.add_argument('--command', '-c', required=True, nargs=REMAINDER, help='The command to run. The binary should be replaced with @binary to be templated out. Any other variables in --extravars should be represented by @varname and will be replaced at runtime. This should be the last argument given as it will capture everything after it.')
 args = parser.parse_args()
 
 # if systemd isn't passed, use the binary name
@@ -72,10 +68,10 @@ def resolve_binary(binary, basedir):
     ''' get the name and path of the binary '''
     regex = '*'+binary+'*'
     result = []
-    for root, dirs, files in os.walk(basedir):
+    for root, dirs, files in walk(basedir):
         for name in files:
-            if fnmatch.fnmatch(name, regex):
-                result.append(os.path.join(root, name))
+            if fnmatch(name, regex):
+                result.append(path.join(root, name))
     return sorted(result)[len(result) - 1] # return the newest entry in the list
 
 def resolve_template(binary, cmd_list, env_vars, extra_vars):
@@ -104,7 +100,7 @@ def worker_thread(command):
     ''' our generic worker thread '''
     sub = Popen(command.split(' '), stdout=PIPE, stderr=PIPE, bufsize=1)
     while True:
-        if SIGINT == True:
+        if SIG == True:
             sub.kill()
         line = sub.stdout.readline()
         CONSOLE.acquire()
@@ -112,8 +108,9 @@ def worker_thread(command):
         CONSOLE.release()
         if not line:
             CONSOLE.acquire()
-            log('Looks like the process exited. Doing the same.')
+            log('Process in {} exited. Joining thread.'.format(current_thread()))
             CONSOLE.release()
+            THREADS.remove(current_thread())
             break
         
 def spawn_threads(command):
@@ -133,18 +130,19 @@ def signal_handler(signal, frame):
     CONSOLE.acquire()
     log('Caught signal {}'.format(SIGNAL_CODES[signal]))
     CONSOLE.release()
-    SIGINT = True
+    SIG = True
     for t in THREADS:
         t.join()
     CONSOLE.acquire()
     log('Killed all threads. Exiting gracefully.')
+    log('Threads still running: {}'.format(THREADS))
     CONSOLE.release()
     NOTIFY.notify("STOPPING=1") # tell systemd we're going down
     return
 
 if __name__ == '__main__':
     CONSOLE.acquire()
-    log('Starting up.')
+    log('GOFER is starting.')
     log('Found args:{}'.format(print_args()))
     real_binary =  resolve_binary(args.binary, args.basedir)
     log('Resolved binary to {}'.format(real_binary))
@@ -156,13 +154,14 @@ if __name__ == '__main__':
     spawn_threads(command)
     NOTIFY.notify('READY=1') # tell systemd we're up and running
     CONSOLE.acquire()
+    log('Sent systemd the READY=1 signal. Daemon should show as active/running.')
     log('Spawned threads {}'.format(str(THREADS)))
     CONSOLE.release()
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGHUP, signal_handler)
-    signal.signal(signal.SIGQUIT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    sys.exit(0)
+    signal(SIGINT, signal_handler)
+    signal(SIGHUP, signal_handler)
+    signal(SIGQUIT, signal_handler)
+    signal(SIGTERM, signal_handler)
+    exit(0)
 
 
 
