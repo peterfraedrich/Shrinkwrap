@@ -8,9 +8,13 @@ The idea behind *gofer* is to provide a way to reliably start and stop JHipster 
 ` $ ./gofer --binary BINARY --basedir PATH --environment @key=value;@key=value --tempdir PATH --command CMD`
 
 `--binary / -b` the name of the binary (without version) to be run. will be resolved to the latest version in the `basedir`
+
 `--basedir / -d` the base directory to look for the binary in, defaults to the current directory
+
 `--environment / -e` @key=value;@key=value list of pairs of envuronment variables to defined in the thread
+
 `--tempdir / -t` The absolute path of the temp folder to clean before launching the binary; defaults to /app/temp. Anything with the `binary` name in it will be removed prior to running the command
+
 `--command / -c` The command to run. The binary should be replaced with @binary to be templated out. Any other variables in --extravars should be represented by @varname and will be replaced at runtime. This should be the last argument given as it will capture everything after it.
 
 *Example*
