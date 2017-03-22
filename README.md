@@ -15,5 +15,9 @@ The idea behind *gofer* is to provide a way to reliably start and stop JHipster 
 
 *Example*
 ```shell
-$ gofer --binary registry --basedir /app/microservices --environment @APP_NAME=MBO-AS-DEV;@APP_DC=as --tempdir /app/temp --command java -jar @binary -appname=@APP_NAME -appdc=@APP_DC```
+$ gofer --binary registry --basedir /app/microservices \
+        --environment @APP_NAME=MBO-AS-DEV;@APP_DC=as \
+        --tempdir /app/temp \
+        --command java -jar @binary -appname=@APP_NAME -appdc=@APP_DC
+```
 
