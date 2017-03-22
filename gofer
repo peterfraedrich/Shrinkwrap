@@ -120,9 +120,9 @@ def worker_thread(command):
             THREADS.remove(current_thread())
             break
         
-def spawn_threads(command):
+def spawn_threads(command, real_binary):
     ''' creates our threads '''
-    thr = Thread(target=worker_thread, args=(command,))
+    thr = Thread(target=worker_thread, args=(command,), name=real_binary)
     thr.start()
     THREADS.append(thr)
 
@@ -174,7 +174,7 @@ if __name__ == '__main__':
     command = resolve_template(real_binary, args.command, args.environment, extra_vars)
     log('Resolved command to {}'.format(command))
     CONSOLE.release()
-    spawn_threads(command)
+    spawn_threads(command, real_binary)
     CONSOLE.acquire()
     log('Spawned threads {}'.format(str(THREADS)))
     CONSOLE.release()
