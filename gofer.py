@@ -2,7 +2,7 @@
 
 #### standard modules
 from argparse import ArgumentParser, REMAINDER
-from os import walk, path
+from os import walk, path, listdir, remove, rmdir
 from sys import exit
 from signal import signal, SIGINT, SIGHUP, SIGQUIT, SIGTERM
 from threading import Thread, Lock, current_thread
@@ -24,7 +24,9 @@ parser.add_argument('--systemd', '-s', required=False, help='the systemd unit na
 parser.add_argument('--basedir', '-d', required=True, help='The base directory to look for the target binary')
 parser.add_argument('--extravars', '-e', required=False, help='@key=value;@key=value list of pairs of variables to pass into the command')
 parser.add_argument('--environment', '-v', required=False, help='@key=value;@key=value list of pairs of envuronment variables to defined in the thread')
+parser.add_argument('--tempdir', '-t', required=False, help='The absolute path of the temp folder to clean before launching the binary; defaults to /app/temp', default='/app/temp')
 parser.add_argument('--command', '-c', required=True, nargs=REMAINDER, help='The command to run. The binary should be replaced with @binary to be templated out. Any other variables in --extravars should be represented by @varname and will be replaced at runtime. This should be the last argument given as it will capture everything after it.')
+parser.add_argument('--notifymsg', '-n', required=False, default='is running! Access URLs:', help='Sends systemd READY=1 when finding the string in the logs. defaults to "is running! Access URLs:"')
 args = parser.parse_args()
 
 # if systemd isn't passed, use the binary name
@@ -41,6 +43,7 @@ def print_args():
         'basedir': args.basedir,
         'extravars': args.extravars,
         'environment': args.environment,
+        'tempdir': args.tempdir,
         'command': c}
     return a
 
@@ -72,6 +75,7 @@ def resolve_binary(binary, basedir):
         for name in files:
             if fnmatch(name, regex):
                 result.append(path.join(root, name))
+    print result
     return sorted(result)[len(result) - 1] # return the newest entry in the list
 
 def resolve_template(binary, cmd_list, env_vars, extra_vars):
@@ -105,6 +109,9 @@ def worker_thread(command):
         line = sub.stdout.readline()
         CONSOLE.acquire()
         log(line.strip('\n'))
+        if 'is running! Access URLs:' in line:
+            NOTIFY.notify('READY=1') # tell systemd we're up and running
+            log('Sent systemd the READY=1 signal. Daemon should show as active/running.')
         CONSOLE.release()
         if not line:
             CONSOLE.acquire()
@@ -140,9 +147,25 @@ def signal_handler(signal, frame):
     NOTIFY.notify("STOPPING=1") # tell systemd we're going down
     return
 
+def clean_temp_files():
+    ''' cleans the /app/temp folder of temp files, if exists '''
+    temp_files = listdir(args.tempdir)
+    count = 0
+    for file in temp_files:
+        if args.binary in file:
+            try:
+                remove(path.join(args.tempdir, file))
+                count += 1
+            except:
+                rmdir(path.join(args.tempdir, file))
+                count += 1            
+    log('Removed {} temp files from {}'.format(count, args.tempdir))
+    return
+
 if __name__ == '__main__':
     CONSOLE.acquire()
     log('GOFER is starting.')
+    clean_temp_files()
     log('Found args:{}'.format(print_args()))
     real_binary =  resolve_binary(args.binary, args.basedir)
     log('Resolved binary to {}'.format(real_binary))
@@ -152,9 +175,7 @@ if __name__ == '__main__':
     log('Resolved command to {}'.format(command))
     CONSOLE.release()
     spawn_threads(command)
-    NOTIFY.notify('READY=1') # tell systemd we're up and running
     CONSOLE.acquire()
-    log('Sent systemd the READY=1 signal. Daemon should show as active/running.')
     log('Spawned threads {}'.format(str(THREADS)))
     CONSOLE.release()
     signal(SIGINT, signal_handler)
