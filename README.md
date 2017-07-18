@@ -1,11 +1,11 @@
-# GOFER
-Gofer is a daemon process host designed for running JHipster inside systemd.
+# Shrinkwrap
+Shrinkwrap is a daemon process host designed for running JHipster inside systemd.
 
 ### Theory
-The idea behind *gofer* is to provide a way to reliably start and stop JHipster systemd services and do some housekeeping tasks on startup. It abstracts the binary name from the systemd unit, allowing you to deploy versioned binaries without the need to update your unit files or startup scripts. Additionally, *gofer* will watch for log outputs and send the systemd READY=1 notification (for use with `Type=notify` units) only when the JHipster app is ready to recieve connections. This avoids instances where your app crashes on startup but systemd doesn't see it as down.
+The idea behind *shrinkwrap* is to provide a way to reliably run versioned binaries ('some_binary-v1.2.4') as systemd services. It abstracts the binary name from the systemd unit, allowing you to deploy versioned binaries without the need to update your unit files or startup scripts. Additionally, *shrinkwrap* will watch for log outputs and send the systemd READY=1 notification (for use with `Type=notify` units) only when the binary is ready to recieve connections. This avoids instances where your app crashes on startup but the wrapper might still be running.
 
 ### Usage
-` $ ./gofer --binary BINARY --basedir PATH --environment @key=value;@key=value --tempdir PATH --command CMD`
+` $ ./shrinkwrap --binary BINARY --basedir PATH --environment @key=value;@key=value --tempdir PATH --command CMD`
 
 `--binary / -b` the name of the binary (without version) to be run. will be resolved to the latest version in the `basedir`
 
@@ -19,9 +19,13 @@ The idea behind *gofer* is to provide a way to reliably start and stop JHipster 
 
 *Example*
 ```shell
-$ gofer --binary registry --basedir /app/microservices \
+$ shrinkwrap --binary registry --basedir /app/microservices \
         --environment @APP_NAME=MBO-AS-DEV;@APP_DC=as \
         --tempdir /app/temp \
         --command java -jar @binary -appname=@APP_NAME -appdc=@APP_DC
 ```
 
+### COMING SOON
+* External persistent config `config.yaml`
+* Basic process monitoring and statistics generation
+* Spawning multiple binaries from a single systemd service / docker container
