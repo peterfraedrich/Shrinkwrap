@@ -3,13 +3,23 @@
 #### standard modules
 from os import walk, path, listdir, remove, rmdir
 from sys import exit
-#from signal import signal, SIGINT, SIGHUP, SIGQUIT, SIGTERM
+from signal import signal, SIGINT, SIGHUP, SIGQUIT, SIGTERM
 from threading import Thread, Lock, current_thread
 from fnmatch import fnmatch
 from subprocess import Popen, PIPE
 
 #### 3rd party
 import sdnotify
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[38;5;33m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[38;5;7m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    GRAY = '\033[38;5;7m'
 
 class shrinkwrap:
     '''
@@ -21,43 +31,34 @@ class shrinkwrap:
     NOTIFY = sdnotify.SystemdNotifier()
 
     def __init__(self, config):
-        self.config = config    
+        self.config = config   
+        self.DEBUG = config['debug'] 
 
-    def _print_args():
+    def _print_args(self):
         ''' gives us good formatting for logging args'''
-        c = ''
-        for i in self.config['args']['command']:
-            c += str(i) + ' '
-        a = {'binary': self.config['args']['binary'],
-            'systemd': self.config['args']['systemd'],
-            'basedir': self.config['args']['basedir'],
-            'extravars': self.config['args']['extravars'],
-            'environment': self.config['args']['environment'],
-            'tempdir': self.config['args']['tempdir'],
-            'command': c}
+        a = {'binary': self.config['binary'],
+            'systemd': self.config['systemd'],
+            'basedir': self.config['basedir'],
+            'environment': self.config['environment'],
+            'debug': self.config['debug'],
+            'command': self.config['command']}
         return a
 
     #### set up logging
-    def _log(self, message):
+    def _log(self, message, debug=None):
         '''
         log to stdout to be picked up by journal.
         we dont need to append log levels or anything because were
         just replicating what the tread spits out.
         '''
-        print '{}'.format(str(message))
+        if self.DEBUG == True and debug == True:
+            print '{}SHRINKWRAP{} [DEBUG]{}: {}{}'.format(bcolors.OKBLUE, bcolors.WARNING, bcolors.GRAY, str(message), bcolors.ENDC)
+        elif self.DEBUG != True and debug == True:
+            pass
+        else:
+            print '{}SHRINKWRAP{} [MAIN ]{}: {}'.format(bcolors.OKBLUE, bcolors.OKGREEN, bcolors.ENDC, str(message))
 
-    def _split_extra_vars(self, extra_vars):
-        ''' splits our extra vars into something we can use '''
-        if extra_vars == None:
-            return {}
-        v = {}
-        t = extra_vars.split(';')
-        for i in t:
-            a = i.split('=')
-            v[a[0]] = a[1]
-        return v
-
-    def _resolve_binary(binary, basedir):
+    def _resolve_binary(self, binary, basedir):
         ''' get the name and path of the binary '''
         regex = '*'+binary+'*'
         result = []
@@ -65,58 +66,47 @@ class shrinkwrap:
             for name in files:
                 if fnmatch(name, regex):
                     result.append(path.join(root, name))
-        print result
         return sorted(result)[len(result) - 1] # return the newest entry in the list
 
-    def _resolve_template(binary, cmd_list, env_vars, extra_vars):
+    def _resolve_template(self, binary, cmd_list, env_vars):
         ''' resolve the templated command to an actual command '''
         # flatten command to string
         c = ''
-        for i in cmd_list:
-            c += str(i) + ' '
-        for k,v in extra_vars.iteritems():
-            if k in c:
-                c = c.replace(k, v)
+        if isinstance(cmd_list, list):
+            c += ' '.join(cmd_list)
+        else:
+            c += cmd_list
         # sub in binary name
-        c = c.replace('@binary', real_binary)
-
-        # add env vars to command
-        if env_vars == None:
-            return c
-        env = env_vars.split(';')
-        e = ''
-        for i in env:
-            e += str(i) + ' '
-        c = e + ' ' + c
+        c = c.replace('@binary', self.real_binary)
         return c
 
-    def _worker_thread(command):
+    def _worker_thread(self, command):
         ''' our generic worker thread '''
-        sub = Popen(command.split(' '), stdout=PIPE, stderr=PIPE, bufsize=1)
+        sub = Popen(command.split(' '), stdout=PIPE, stderr=PIPE, bufsize=1, env=self.config['environment'])
         while True:
-            if SIG == True:
+            if self.SIG == True:
                 sub.kill()
             line = sub.stdout.readline()
-            CONSOLE.acquire()
-            log(line.strip('\n'))
-            if 'is running! Access URLs:' in line:
-                NOTIFY.notify('READY=1') # tell systemd we're up and running
-                log('Sent systemd the READY=1 signal. Daemon should show as active/running.')
-            CONSOLE.release()
+            self.CONSOLE.acquire()
+            self._log(line.strip('\n'), False)
+            if self.config['notifymsg'] in line:
+                self.NOTIFY.notify('READY=1') # tell systemd we're up and running
+                self._log('Sent systemd the READY=1 signal. Daemon should show as active/running.', True)
+            self.CONSOLE.release()
             if not line:
-                CONSOLE.acquire()
-                log('Process in {} exited. Joining thread.'.format(current_thread()))
-                CONSOLE.release()
-                THREADS.remove(current_thread())
+                self.CONSOLE.acquire()
+                self._log('Process in {} exited. Joining thread.'.format(current_thread()), True)
+                self.CONSOLE.release()
+                self.THREADS.remove(current_thread())
                 break
             
-    def _spawn_threads(command, real_binary):
+    def _spawn_threads(self, command, real_binary):
         ''' creates our threads '''
-        thr = Thread(target=worker_thread, args=(command,), name=real_binary)
+        thr = Thread(target=self._worker_thread, args=(command,), name=real_binary)
         thr.start()
-        THREADS.append(thr)
+        self.THREADS.append(thr)
 
-    def _signal_handler(signal, frame):
+    def _signal_handler(self, signal, frame):
         ''' catches signals and logs them. graceful exits FTW. '''
         SIGNAL_CODES = {
             1 : 'SIGHUP',
@@ -124,54 +114,37 @@ class shrinkwrap:
             3 : 'SIGQUIT',
             15 : 'SIGTERM'
         }
-        CONSOLE.acquire()
-        log('Caught signal {}'.format(SIGNAL_CODES[signal]))
-        CONSOLE.release()
-        SIG = True
-        for t in THREADS:
+        self.CONSOLE.acquire()
+        self._log('Caught signal {}'.format(SIGNAL_CODES[signal]), True)
+        self.CONSOLE.release()
+        self.SIG = True
+        for t in self.THREADS:
             t.join()
-        CONSOLE.acquire()
-        log('Killed all threads. Exiting gracefully.')
-        log('Threads still running: {}'.format(THREADS))
-        CONSOLE.release()
+        self.CONSOLE.acquire()
+        self._log('Killed all threads. Exiting gracefully.', True)
+        self._log('Threads still running: {}'.format(self.THREADS), True)
+        self.CONSOLE.release()
         NOTIFY.notify("STOPPING=1") # tell systemd we're going down
-        return
-
-    def _clean_temp_files(self):
-        ''' cleans the /app/temp folder of temp files, if exists '''
-        temp_files = listdir(self.config['args']['tempdir'])
-        count = 0
-        for file in temp_files:
-            if self.config['args']['binary'] in file:
-                try:
-                    remove(path.join(self.config['args']['tempdir'], file))
-                    count += 1
-                except:
-                    rmdir(path.join(self.config['args']['tempdir'], file))
-                    count += 1            
-        log('Removed {} temp files from {}'.format(count, self.config['args']['tempdir']))
         return
 
     def start(self):
         self.CONSOLE.acquire()
-        self._log('shrinkwrap is starting.')
-        self._clean_temp_files()
-        self._log('Found args:{}'.format(print_args()))
-        real_binary = self._resolve_binary(self.config['args']['binary'], self.config['args']['basedir'])
-        self._log('Resolved binary to {}'.format(real_binary))
-        extra_vars = self._split_extra_vars(self.config['args']['extravars'])
-        self._log('Resolved extra vars to {}'.format(str(extra_vars)))
-        command = self._resolve_template(real_binary, self.config['args']['command'], self.config['args']['environment'], extra_vars)
-        self._log('Resolved command to {}'.format(command))
+        self._log('shrinkwrap is starting.', True)
+        self._log('Found args: {}'.format(self._print_args()), True)
+        self._log('Found environment variables: {}'.format(self.config['environment']), True)
+        self.real_binary = self._resolve_binary(self.config['binary'], self.config['basedir'])
+        self._log('Resolved binary to {}'.format(self.real_binary), True)
+        command = self._resolve_template(self.real_binary, self.config['command'], self.config['environment'])
+        self._log('Resolved command to {}'.format(command), True)
         self.CONSOLE.release()
-        self._spawn_threads(command, real_binary)
+        self._spawn_threads(command, self.real_binary)
         self.CONSOLE.acquire()
-        self._log('Spawned threads {}'.format(str(self.THREADS)))
+        self._log('Spawned threads {}'.format(str(self.THREADS)), True)
         self.CONSOLE.release()
-        signal(SIGINT, signal_handler)
-        signal(SIGHUP, signal_handler)
-        signal(SIGQUIT, signal_handler)
-        signal(SIGTERM, signal_handler)
+        signal(SIGINT, self._signal_handler)
+        signal(SIGHUP, self._signal_handler)
+        signal(SIGQUIT, self._signal_handler)
+        signal(SIGTERM, self._signal_handler)
         exit(0)
 
 

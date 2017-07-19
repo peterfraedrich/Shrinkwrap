@@ -1,3 +1,9 @@
 ---
-app:
-  - something: else
+binary: test.sh
+systemd: testd
+basedir: /tmp
+environment: 
+  TEST: testvar
+command: ./test.sh
+notifymsg: READY
+debug:
